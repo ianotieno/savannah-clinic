@@ -5,6 +5,10 @@ from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
+
+
+
+
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -95,7 +99,21 @@ def validate_slot(doctor, appointment_date, start_time, exclude_id=None):
         })
 
 
+
+
 class AppointmentCreateView(APIView):
+    
+    def get(self, request):
+        appointments = Appointment.objects.select_related(
+            "patient",
+            "doctor",
+        ).order_by("appointment_date", "start_time")
+
+        serializer = AppointmentSerializer(appointments, many=True)
+        return Response(serializer.data)
+
+    
+
     def post(self, request):
         serializer = BookingSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

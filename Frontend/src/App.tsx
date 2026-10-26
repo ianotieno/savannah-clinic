@@ -376,7 +376,7 @@ function App() {
       {showBookingModal && (
         <BookingModal
           doctors={doctors}
-          appointments={appointments}
+        
           selectedDoctorId={selectedDoctorId}
           appointmentToEdit={selectedAppointment}
           onClose={closeBookingModal}

@@ -1,13 +1,12 @@
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 
 import type { Appointment, Doctor } from "../../types";
-import { getAvailableSlots } from "../../utils/availability";
+import { getDoctorAvailability } from "../../services/clinicApi";
 
 type BookingModalProps = {
   doctors: Doctor[];
-  appointments: Appointment[];
   selectedDoctorId?: number;
   appointmentToEdit?: Appointment | null;
   onClose: () => void;
@@ -16,60 +15,109 @@ type BookingModalProps = {
 
 export default function BookingModal({
   doctors,
-  appointments,
   selectedDoctorId,
   appointmentToEdit,
   onClose,
   onSubmit,
-}: BookingModalProps) {
+}: BookingModalProps)  {
   const [patient, setPatient] = useState(
-    appointmentToEdit?.patient ?? ""
+    appointmentToEdit?.patient ?? "",
   );
 
   const [email, setEmail] = useState(
-    appointmentToEdit?.email ?? ""
+    appointmentToEdit?.email ?? "",
   );
 
   const [doctorId, setDoctorId] = useState(
     appointmentToEdit?.doctorId ??
       selectedDoctorId ??
       doctors[0]?.id ??
-      0
+      0,
   );
 
   const [date, setDate] = useState(
     appointmentToEdit?.date ??
-      new Date().toLocaleDateString("en-CA")
+      new Date().toLocaleDateString("en-CA"),
   );
 
   const [time, setTime] = useState(
-    appointmentToEdit?.time ?? ""
+    appointmentToEdit?.time ?? "",
   );
 
   const [reason, setReason] = useState(
-    appointmentToEdit?.reason ?? ""
+    appointmentToEdit?.reason ?? "",
   );
 
   const [error, setError] = useState("");
+  const [availableSlots, setAvailableSlots] = useState<string[]>([]);
+  const [availabilityLoading, setAvailabilityLoading] = useState(true);
+  const [availabilityError, setAvailabilityError] = useState("");
 
-  const availableSlots = getAvailableSlots(
-    doctorId,
-    date,
-    appointments,
-    appointmentToEdit?.id
-  );
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAvailability() {
+      if (!doctorId || !date) {
+        setAvailableSlots([]);
+        setAvailabilityLoading(false);
+        return;
+      }
+
+      setAvailabilityLoading(true);
+      setAvailabilityError("");
+
+      try {
+        const response = await getDoctorAvailability(doctorId, date);
+
+        if (cancelled) return;
+
+        const slots = response.slots
+          .filter((slot) => slot.available)
+          .map((slot) => slot.start_time.slice(0, 5));
+
+        // Preserve the original slot when rescheduling on the same date.
+        const originalSlot =
+          appointmentToEdit?.date === date
+            ? appointmentToEdit.time
+            : undefined;
+
+        if (originalSlot && !slots.includes(originalSlot)) {
+          slots.push(originalSlot);
+        }
+
+        setAvailableSlots([...new Set(slots)].sort());
+        setAvailabilityError("");
+      } catch (err: unknown) {
+        if (cancelled) return;
+
+        setAvailableSlots([]);
+
+        setAvailabilityError(
+          err instanceof Error
+            ? err.message
+            : "Could not load available appointment times.",
+        );
+      } finally {
+        if (!cancelled) {
+          setAvailabilityLoading(false);
+        }
+      }
+    }
+
+    void loadAvailability();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [doctorId, date, appointmentToEdit]);
 
   const handleSubmit = (
-    event: React.FormEvent<HTMLFormElement>
+    event: React.FormEvent<HTMLFormElement>,
   ) => {
     event.preventDefault();
     setError("");
 
-    if (
-      !patient.trim() ||
-      !email.trim() ||
-      !reason.trim()
-    ) {
+    if (!patient.trim() || !email.trim() || !reason.trim()) {
       setError("Please complete all fields.");
       return;
     }
@@ -87,16 +135,17 @@ export default function BookingModal({
       return;
     }
 
-    if (!time || !availableSlots.includes(time)) {
-      setError(
-        "Please select a time slot that is still available."
-      );
+    if (
+      availabilityLoading ||
+      availabilityError ||
+      !time ||
+      !availableSlots.includes(time)
+    ) {
+      setError("Please select a currently available time slot.");
       return;
     }
 
     const appointment: Appointment = {
-      // The parent component assigns an ID to new appointments.
-      // When rescheduling, preserve the existing ID.
       id: appointmentToEdit?.id ?? 0,
       patient: patient.trim(),
       email: email.trim(),
@@ -105,6 +154,7 @@ export default function BookingModal({
       time,
       reason: reason.trim(),
       status: "Upcoming",
+      cancellationReason: undefined,
     };
 
     onSubmit(appointment);
@@ -138,10 +188,7 @@ export default function BookingModal({
         </div>
 
         {/* Form */}
-        <form
-          onSubmit={handleSubmit}
-          className="space-y-5 p-6"
-        >
+        <form onSubmit={handleSubmit} className="space-y-5 p-6">
           <div>
             <label
               htmlFor="patient"
@@ -201,15 +248,14 @@ export default function BookingModal({
               onChange={(event) => {
                 setDoctorId(Number(event.target.value));
                 setTime("");
+                setAvailabilityLoading(true);
+                setAvailabilityError("");
                 setError("");
               }}
               className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
             >
               {doctors.map((doctor) => (
-                <option
-                  key={doctor.id}
-                  value={doctor.id}
-                >
+                <option key={doctor.id} value={doctor.id}>
                   {doctor.name} — {doctor.specialty}
                 </option>
               ))}
@@ -233,6 +279,8 @@ export default function BookingModal({
               onChange={(event) => {
                 setDate(event.target.value);
                 setTime("");
+                setAvailabilityLoading(true);
+                setAvailabilityError("");
                 setError("");
               }}
               className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
@@ -251,14 +299,19 @@ export default function BookingModal({
               id="time"
               required
               value={time}
+              disabled={availabilityLoading || !!availabilityError}
               onChange={(event) => {
                 setTime(event.target.value);
                 setError("");
               }}
-              className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
+              className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500 disabled:bg-slate-100"
             >
               <option value="">
-                Select a time slot
+                {availabilityLoading
+                  ? "Loading available times..."
+                  : availabilityError
+                    ? "Availability unavailable"
+                    : "Select a time slot"}
               </option>
 
               {availableSlots.map((slot) => (
@@ -268,12 +321,20 @@ export default function BookingModal({
               ))}
             </select>
 
-            {availableSlots.length === 0 && (
-              <p className="mt-2 text-sm text-amber-600">
-                No slots are available for this doctor
-                on this date. Try another date.
+            {availabilityError && (
+              <p role="alert" className="mt-2 text-sm text-rose-600">
+                {availabilityError}
               </p>
             )}
+
+            {!availabilityLoading &&
+              !availabilityError &&
+              availableSlots.length === 0 && (
+                <p className="mt-2 text-sm text-amber-600">
+                  No slots are available for this doctor on this date.
+                  Try another date.
+                </p>
+              )}
           </div>
 
           <div>
@@ -299,10 +360,7 @@ export default function BookingModal({
           </div>
 
           {error && (
-            <p
-              role="alert"
-              className="text-sm text-rose-600"
-            >
+            <p role="alert" className="text-sm text-rose-600">
               {error}
             </p>
           )}
@@ -320,6 +378,8 @@ export default function BookingModal({
             <button
               type="submit"
               disabled={
+                availabilityLoading ||
+                !!availabilityError ||
                 availableSlots.length === 0 ||
                 !availableSlots.includes(time)
               }

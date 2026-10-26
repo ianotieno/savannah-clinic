@@ -1,4 +1,6 @@
 
+from datetime import datetime, timedelta
+
 from django.db import models
 from django.db.models import Q
 
@@ -56,15 +58,18 @@ class Appointment(models.Model):
         ]
         indexes = [
             models.Index(
-                fields=["patient", "status", "appointment_date", "start_time"],
+                fields=[
+                    "patient",
+                    "status",
+                    "appointment_date",
+                    "start_time",
+                ],
                 name="patient_appt_lookup_idx",
             ),
         ]
 
     @property
     def end_time(self):
-        from datetime import datetime, timedelta
-
         return (
             datetime.combine(self.appointment_date, self.start_time)
             + timedelta(minutes=30)
